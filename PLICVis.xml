@@ -1,0 +1,24 @@
+<ServerManagerConfiguration>
+  <ProxyGroup name="filters">
+    <SourceProxy 
+	name="PLICVis" 
+	class="vtkPLICVis" 
+	label="PLIC Visualization">
+      <InputProperty
+          name="Input"
+          command="SetInputConnection">
+        <ProxyGroupDomain name="groups">
+          <Group name="sources"/>
+          <Group name="filters"/>
+        </ProxyGroupDomain>
+        <DataTypeDomain name="input_type">
+          <DataType value="vtkRectilinearGrid"/>
+        </DataTypeDomain>
+      </InputProperty>
+      <Hints>
+      	<ShowInMenu category="Common"
+		    icon=":/Common/plic.png" />
+      </Hints>
+    </SourceProxy>
+  </ProxyGroup>
+</ServerManagerConfiguration>
