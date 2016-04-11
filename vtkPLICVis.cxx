@@ -13,7 +13,6 @@
 
 #include "vtkPLICVis.h"
 #include "plicvis_impl.h"
-#include <vector_types.h>
 
 #include <vector>
 
@@ -117,6 +116,10 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
       }
     }
   }
+
+  std::vector<std::vector<int>> borders(0);
+  
+  //  extractPLICBorders(vertices, indices, borders);
 
   const int numPoints = vertices.size();
   const int numTriangles = indices.size()/3;

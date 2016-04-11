@@ -3,7 +3,8 @@
 #include <map>
 #include <cmath>
 #include <limits>
-#include "helper_math.h"
+#include <set>
+#include <list>
 #include "mc_tables.h"
 #include "plicvis_impl.h"
 
@@ -342,4 +343,73 @@ int interfaceCell(vtkDataArray *data, int cell_i, int cell_j, int cell_k, int ce
     }
   }
   return 0;
+}
+
+//
+//http://stackoverflow.com/questions/14108553/get-border-edges-of-mesh-in-winding-order
+//
+void extractPLICBorders(std::vector<float3> &vertices,
+			std::vector<int> &indices,
+			std::vector<std::vector<int>> &borders)
+{
+  std::map<std::pair<int,int>,int> edges;
+  edges.clear();
+
+  const int numTriangles = indices.size()/3;
+  for (int i = 0; i < numTriangles; ++i) {
+    int ids[3] = {indices[i*3+0], indices[i*3+1], indices[i*3+2]};
+    
+    for (int j = 0; j < 3; ++j) {
+
+      int e0 = ids[j];//std::min(ids[j],ids[(j+1)%3]);
+      int e1 = ids[(j+1)%3];//std::max(ids[j],ids[(j+1)%3]);
+      std::pair<int,int> e = std::pair<int,int>(e0,e1);
+
+      if (edges.find(e) != edges.end()) {
+	edges[e] += 1;
+      }
+      else {
+	edges[e] = 1;
+      }
+    }
+  }
+
+  std::list<std::pair<int,int>> edge_list;
+  edge_list.clear();
+
+  for (const auto &edge : edges) {
+    if (edge.second == 1) { // edge with only one traingle attached
+      edge_list.push_front(edge.first);
+    }
+  }
+
+  while (!edge_list.empty()) {
+    
+    std::pair<int,int> e = edge_list.front();
+    edge_list.pop_front();
+    const int i_first = e.first;
+    int i_next = e.second;
+
+    std::vector<int> border(0);
+    border.push_back(i_first);
+    border.push_back(i_next);
+
+    std::list<std::pair<int,int>>::iterator it = edge_list.begin();
+    while (it != edge_list.end() && i_next != i_first) {
+      if (it->first == i_next) {
+	border.push_back(it->second);
+	i_next = it->second;
+	edge_list.erase(it);	
+      }
+      else if (it->second == i_next) {
+	border.push_back(it->first);
+	i_next = it->first;
+	edge_list.erase(it);
+      }
+      else {
+	++it;
+      }
+    }
+    borders.push_back(border);
+  }
 }
