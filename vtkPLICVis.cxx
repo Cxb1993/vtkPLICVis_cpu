@@ -10,6 +10,7 @@
 #include "vtkCellArray.h"
 #include "vtkPointData.h"
 #include "vtkRectilinearGrid.h"
+#include "vtkMPIController.h"
 
 #include "vtkPLICVis.h"
 #include "plicvis_impl.h"
@@ -19,7 +20,8 @@
 vtkStandardNewMacro(vtkPLICVis);
 
 //----------------------------------------------------------------------------
-vtkPLICVis::vtkPLICVis()
+vtkPLICVis::vtkPLICVis():
+  NumGhostLevels(1)
 {
   this->SetNumberOfInputPorts(1);
 }
@@ -35,6 +37,59 @@ int vtkPLICVis::FillInputPortInformation(int port, vtkInformation* info)
   }
   return 0;
 }
+
+//----------------------------------------------------------------------------
+void vtkPLICVis::RemoveGhostCellsFromExtent(const int extent[6],
+					    int fieldExtent[6])
+{
+  vtkMPIController *controller = vtkMPIController::New();
+  if (controller->GetCommunicator() == 0) {
+    controller->Delete();
+    return;
+  }  
+
+  const int numSides = 6;
+  int processId = controller->GetLocalProcessId();
+  int numProcesses = controller->GetNumberOfProcesses();
+
+  // prepare buffers for communication ---------------------------------------
+  std::vector<vtkIdType> recvLengths(numProcesses);
+  std::vector<vtkIdType> recvOffsets(numProcesses);
+  for (int i = 0; i < numProcesses; ++i) {
+    recvLengths[i] = numSides;
+    recvOffsets[i] = i*numSides;
+  }
+  
+  // find global extent ------------------------------------------------------
+  std::vector<int> allExtents(numSides*numProcesses);
+  controller->AllGatherV(&extent[0], &allExtents[0], numSides, 
+			 &recvLengths[0], &recvOffsets[0]);
+
+  int globalExtent[6];
+
+  globalExtent[0] = globalExtent[2] = globalExtent[4] = std::numeric_limits<int>::max();
+  globalExtent[1] = globalExtent[3] = globalExtent[5] = - globalExtent[0];
+
+  for (int i = 0; i < allExtents.size()/6; ++i) {
+    if (globalExtent[0] > allExtents[i*6+0]) globalExtent[0] = allExtents[i*6+0];
+    if (globalExtent[1] < allExtents[i*6+1]) globalExtent[1] = allExtents[i*6+1];
+    if (globalExtent[2] > allExtents[i*6+2]) globalExtent[2] = allExtents[i*6+2];
+    if (globalExtent[3] < allExtents[i*6+3]) globalExtent[3] = allExtents[i*6+3];
+    if (globalExtent[4] > allExtents[i*6+4]) globalExtent[4] = allExtents[i*6+4];
+    if (globalExtent[5] < allExtents[i*6+5]) globalExtent[5] = allExtents[i*6+5];
+  }
+
+  // reduce field extent to one without ghost cells --------------------------------  
+  if (extent[0] > globalExtent[0]) fieldExtent[0] += NumGhostLevels;
+  if (extent[1] < globalExtent[1]) fieldExtent[1] -= NumGhostLevels;
+  if (extent[2] > globalExtent[2]) fieldExtent[2] += NumGhostLevels;
+  if (extent[3] < globalExtent[3]) fieldExtent[3] -= NumGhostLevels;
+  if (extent[4] > globalExtent[4]) fieldExtent[4] += NumGhostLevels;
+  if (extent[5] < globalExtent[5]) fieldExtent[5] -= NumGhostLevels;
+
+  controller->Delete();
+}
+
 //----------------------------------------------------------------------------
 int vtkPLICVis::RequestUpdateExtent(vtkInformation *vtkNotUsed(request),
 				    vtkInformationVector **inputVector,
@@ -42,10 +97,19 @@ int vtkPLICVis::RequestUpdateExtent(vtkInformation *vtkNotUsed(request),
 {
   // set one ghost level -----------------------------------------------------
   vtkInformation *inInfo = inputVector[0]->GetInformationObject(0);
-  inInfo->Set(vtkStreamingDemandDrivenPipeline::UPDATE_NUMBER_OF_GHOST_LEVELS(), 1);
+
+  int ngl = 0;
+  ngl = inInfo->Get(vtkStreamingDemandDrivenPipeline::UPDATE_NUMBER_OF_GHOST_LEVELS());
+  if (ngl == 0) {
+    NumGhostLevels = 1;
+    inInfo->Set(vtkStreamingDemandDrivenPipeline::UPDATE_NUMBER_OF_GHOST_LEVELS(), NumGhostLevels);
+  }
+  else {
+    NumGhostLevels = ngl;
+  }
   
   vtkInformation *outInfo = outputVector->GetInformationObject(0);
-  outInfo->Set(vtkStreamingDemandDrivenPipeline::UPDATE_NUMBER_OF_GHOST_LEVELS(), 1);
+  outInfo->Set(vtkStreamingDemandDrivenPipeline::UPDATE_NUMBER_OF_GHOST_LEVELS(), NumGhostLevels);
 
   return 1;
 }
@@ -55,7 +119,7 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 			    vtkInformationVector *outputVector)
 {
   vtkInformation *inInfo = inputVector[0]->GetInformationObject(0);
-  vtkSmartPointer<vtkRectilinearGrid> input = vtkRectilinearGrid::
+  vtkRectilinearGrid *input = vtkRectilinearGrid::
     SafeDownCast(inInfo->Get(vtkDataObject::DATA_OBJECT()));
 
   vtkInformation *outInfo = outputVector->GetInformationObject(0);
@@ -80,15 +144,31 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
   input->GetDimensions(nodeRes);
   int cellRes[3] = {nodeRes[0]-1,nodeRes[1]-1,nodeRes[2]-1};
 
+  
   int extent[6];
-  input->GetExtent(extent);
+  input->GetExtent(extent);    
+  int fieldExtent[6] = {0, cellRes[0], 0, cellRes[1], 0, cellRes[2]};
+  RemoveGhostCellsFromExtent(extent, fieldExtent);
+    
+  int imin = fieldExtent[0];
+  int imax = fieldExtent[1];
+  int jmin = fieldExtent[2];
+  int jmax = fieldExtent[3];
+  int kmin = fieldExtent[4];
+  int kmax = fieldExtent[5];
 
-  int imin = 1;
-  int imax = cellRes[0]-1;
-  int jmin = 1;
-  int jmax = cellRes[1]-1;
-  int kmin = 1;
-  int kmax = cellRes[2]-1;
+  if (cellRes[0] < 2) {
+    imin = 0;
+    imax = 1;
+  }
+  if (cellRes[1] < 2) {
+    jmin = 0;
+    jmax = 1;
+  }
+  if (cellRes[2] < 2) {
+    kmin = 0;
+    kmax = 1;
+  }
 
   vtkDataArray *data = input->GetCellData()->GetArray("Data");
   int vertexID = 0;

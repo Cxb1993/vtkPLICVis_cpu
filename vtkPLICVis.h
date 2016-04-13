@@ -21,5 +21,11 @@ class vtkPLICVis : public vtkPolyDataAlgorithm
   int RequestData(vtkInformation*, 
 		  vtkInformationVector**, 
 		  vtkInformationVector*);
+
+ private:
+  void RemoveGhostCellsFromExtent(const int extent[6],
+				  int fieldExtent[6]);
+
+  int NumGhostLevels;
 };
 #endif

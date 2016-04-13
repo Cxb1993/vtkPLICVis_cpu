@@ -361,8 +361,8 @@ void extractPLICBorders(std::vector<float3> &vertices,
     
     for (int j = 0; j < 3; ++j) {
 
-      int e0 = ids[j];//std::min(ids[j],ids[(j+1)%3]);
-      int e1 = ids[(j+1)%3];//std::max(ids[j],ids[(j+1)%3]);
+      int e0 = std::min(ids[j],ids[(j+1)%3]);//ids[j];//
+      int e1 = std::max(ids[j],ids[(j+1)%3]);//ids[(j+1)%3];//
       std::pair<int,int> e = std::pair<int,int>(e0,e1);
 
       if (edges.find(e) != edges.end()) {
