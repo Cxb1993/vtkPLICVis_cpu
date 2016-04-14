@@ -16,6 +16,7 @@
 #include "plicvis_impl.h"
 
 #include <vector>
+#include <array>
 
 vtkStandardNewMacro(vtkPLICVis);
 
@@ -170,33 +171,51 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
     kmax = 1;
   }
 
+
+  int memSize = 0;  
   vtkDataArray *data = input->GetCellData()->GetArray("Data");
+  memSize = data->GetActualMemorySize();
+
+  std::cout << "memSize = " << memSize << std::endl;
+
+  const int memAval = 128*256*256*4*13;
+
+  std::vector<std::array<int,6>> dataChunks;
+  dataChunks.resize(1);
+  dataChunks[0][0] = imin;
+  dataChunks[0][1] = imax;
+  dataChunks[0][2] = jmin;
+  dataChunks[0][3] = jmax;
+  dataChunks[0][4] = kmin;
+  dataChunks[0][5] = kmax;
+  
   int vertexID = 0;
-  for (int k = kmin; k < kmax; ++k) {
-    float oz = coords[2]->GetComponent(k,0);
-    for (int j = jmin; j < jmax; ++j) {
-      float oy = coords[1]->GetComponent(j,0);
-      for (int i = imin; i < imax; ++i) {
-	float ox = coords[0]->GetComponent(i,0);
+  for (int c = 0; c < dataChunks.size(); ++c) {
+  
+    for (int k = dataChunks[c][4]; k < dataChunks[c][5]; ++k) {
+      float oz = coords[2]->GetComponent(k,0);
+      for (int j = dataChunks[c][2]; j < dataChunks[c][3]; ++j) {
+	float oy = coords[1]->GetComponent(j,0);
+	for (int i = dataChunks[c][0]; i < dataChunks[c][1]; ++i) {
+	  float ox = coords[0]->GetComponent(i,0);
 
-	int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
-	float f = data->GetComponent(idx, 0);
-	if (f <= EMF0) {
-	  continue;
+	  int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
+	  float f = data->GetComponent(idx, 0);
+	  if (f <= EMF0) {
+	    continue;
+	  }
+	  if (f >= EMF1 && !interfaceCell(data, i, j, k, cellRes)) {
+	    continue;
+	  }
+
+	  float3 grad = computeGradient(data, i, j, k, cellRes, dx, dy, dz);
+	  generatePLIC(f, grad, dx[i], dy[j], dz[k], 
+		       ox, oy, oz, vertices, indices, vertexID);
 	}
-
-	if (f >= EMF1 && !interfaceCell(data, i, j, k, cellRes)) {
-	  continue;
-	}
-
-	float3 grad = computeGradient(data, i, j, k, cellRes, dx, dy, dz);
-
-	generatePLIC(f, grad, dx[i], dy[j], dz[k], 
-	 	     ox, oy, oz, vertices, indices, vertexID);
       }
     }
   }
-
+  
   std::vector<std::vector<int>> borders(0);
   
   //  extractPLICBorders(vertices, indices, borders);
