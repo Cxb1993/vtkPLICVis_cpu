@@ -321,26 +321,22 @@ void nodeCoordsToEdgeLengths(vtkDataArray *coords, std::vector<float> &dx)
 
 int interfaceCell(vtkDataArray *data, int cell_i, int cell_j, int cell_k, int cellRes[3])
 {
-  int im = std::max(0,cell_i-1);
-  int ip = std::min(cellRes[0]-1,cell_i+1);
-  int jm = std::max(0,cell_j-1);
-  int jp = std::min(cellRes[1]-1,cell_j+1);
-  int km = std::max(0,cell_k-1);
-  int kp = std::min(cellRes[2]-1,cell_k+1);
+  int im = cell_i > 0 ? -1 : 0;
+  int ip = cell_i < cellRes[0]-1 ? 1 : 0;
+  int jm = cell_j > 0 ? -cellRes[0] : 0;
+  int jp = cell_j < cellRes[1]-1 ? cellRes[0] : 0;
+  int km = cell_k > 0 ? -cellRes[0]*cellRes[1] : 0;
+  int kp = cell_k < cellRes[2]-1 ? cellRes[0]*cellRes[1] : 0;
 
-  for (int k = km; k <= kp; ++k) {
-    for (int j = jm; j <= jp; ++j) {
-      for (int i = im; i <= ip; ++i) {
-	
-	if (i == cell_i && j == cell_j && k == cell_k) 
-	  continue;
+  int idx = cell_i + cell_j*cellRes[0] + cell_k*cellRes[0]*cellRes[1];
 
-	int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
-	if (data->GetComponent(idx,0) < EMF1) {
-	  return 1;
-	}
-      }
-    }
+  if (data->GetComponent(idx+im,0) <= EMF0 ||
+      data->GetComponent(idx+ip,0) <= EMF0 ||
+      data->GetComponent(idx+jm,0) <= EMF0 ||
+      data->GetComponent(idx+jp,0) <= EMF0 ||
+      data->GetComponent(idx+km,0) <= EMF0 ||
+      data->GetComponent(idx+kp,0) <= EMF0) {
+    return 1;
   }
   return 0;
 }
