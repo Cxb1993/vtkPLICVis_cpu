@@ -174,6 +174,9 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 
   int memSize = 0;  
   vtkDataArray *data = input->GetCellData()->GetArray("Data");
+  if (data == nullptr) {
+    data = input->GetCellData()->GetArray(0);
+  }
   memSize = data->GetActualMemorySize();
 
   std::cout << "memSize = " << memSize << std::endl;
