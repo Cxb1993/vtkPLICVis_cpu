@@ -103,6 +103,11 @@ inline float3 cross(float3 a, float3 b)
   return make_float3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x);
 }
 
+inline float clamp(float f, float a, float b)
+{
+  return std::max(a, std::min(f, b));
+}
+
 //----------------------------------------------------------------------------
 
 float3 computeGradient(vtkDataArray *data, int cell_i, int cell_j, int cell_k, int cellRes[3],

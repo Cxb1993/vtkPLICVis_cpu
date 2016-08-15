@@ -51,7 +51,7 @@ float3 computeGradient(vtkDataArray *data, int cell_i, int cell_j, int cell_k, i
 	dfm2 = (f[6] - f[2])*dy[jm] + (f[4] -  f[0])*dy[jp];	    
 	float nz = 0.25f*(dfm1*dx[im]+dfm2*dx[ip]) / (dxc*dyc*dzc);
 
-	cellGradient += make_float3(-nx,-ny,-nz);// normal points from f outwards
+	cellGradient += make_float3(nx,ny,nz);// normal points from f outwards
       }
     }
   }

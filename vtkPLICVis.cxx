@@ -136,7 +136,7 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 
   vtkInformation *outInfo = outputVector->GetInformationObject(0);
   vtkPolyData *output = vtkPolyData::
-      SafeDownCast(outInfo->Get(vtkDataObject::DATA_OBJECT()));
+    SafeDownCast(outInfo->Get(vtkDataObject::DATA_OBJECT()));
 
   vtkDataArray *coords[3] = {input->GetXCoordinates(),
 			     input->GetYCoordinates(),
@@ -198,13 +198,18 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
   dataChunks[0][4] = kmin;
   dataChunks[0][5] = kmax;
 
-  // vtkSmartPointer<vtkUnsignedLongArray> cellIds = vtkSmartPointer<vtkUnsignedLongArray>::New();
-  // cellIds->SetName("CellIds");
-  // cellIds->SetNumberOfComponents(1);
-  // cellIds->SetNumberOfTuples(0);
+  vtkSmartPointer<vtkUnsignedLongArray> cellIds = vtkSmartPointer<vtkUnsignedLongArray>::New();
+  cellIds->SetName("CellIds");
+  cellIds->SetNumberOfComponents(1);
+  cellIds->SetNumberOfTuples(0);
 
   vtkCellArray *cells = vtkCellArray::New();
-  // cells->SetCells(numTriangles, cellIndices);
+
+  // texture coordinates------------------------------------------------------
+  vtkSmartPointer<vtkFloatArray> texCoords = vtkSmartPointer<vtkFloatArray>::New();
+  texCoords->SetNumberOfComponents(3);
+  texCoords->SetName("Texture Coordinates");
+
 
   int vertexID = 0;
   int prev_indicesSize = 0;
@@ -219,6 +224,7 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 	  float ox = coords[0]->GetComponent(i,0);
 
 	  unsigned int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
+
 	  float f = data->GetComponent(idx, 0);
 	  if (f <= EMF0) {
 	    continue;
@@ -228,50 +234,89 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 	  }
 
 	  float3 grad = computeGradient(data, i, j, k, cellRes, dx, dy, dz);
-	  generatePLIC(f, grad, dx[i], dy[j], dz[k], 
+	  generatePLIC(f, -grad, dx[i], dy[j], dz[k], 
 		       ox, oy, oz, vertices, indices, vertexID);
 
 	  
 	  //
 	  int numPoints = vertices.size() - prev_verticesSize;
-	  std::vector<std::pair<int,float>> angles;
-	  angles.clear();
+	  if (numPoints > 0) {
 
-	  float3 center = make_float3(0.0f);
-	  for (int n = 0; n < numPoints; ++n) {
-	    center += vertices[prev_verticesSize+n];
+	    float3 nrm = normalize(-grad);
+	    float3 center = make_float3(0.0f);
+	    for (int n = 0; n < numPoints; ++n) {
+	      center += vertices[prev_verticesSize+n];
+	    }
+	    center /= numPoints;
+
+	    std::vector<std::pair<int,float>> angles;
+	    angles.clear();
+
+	    angles.push_back(std::pair<int,float>(prev_verticesSize+0,0.0f));
+	    for (int n = 1; n < numPoints; ++n) {
+	    
+	      float3 e0 = normalize(vertices[prev_verticesSize+0] - center);
+	      float3 e1 = normalize(vertices[prev_verticesSize+n] - center);
+	      float3 cr = cross(e0,e1);
+	      float dtp = clamp(dot(e0,e1),-1.0f,1.0f);	      
+	      float angle = std::acos(dtp);
+	      float dir = dot(cr,nrm);
+	      const float pi = 2.0f*std::acos(0.0f);
+	      if (dir < 0.0f) {
+		angle = pi + (pi - angle);
+	      }
+	      angles.push_back(std::pair<int,float>(prev_verticesSize+n,angle));
+	    }
+	    std::sort(angles.begin(), angles.end(), sortBySecond);
+
+	    vtkPolygon *poly = vtkPolygon::New();
+	    poly->GetPointIds()->SetNumberOfIds(angles.size());
+	    for (int n = 0; n < angles.size(); ++n) {
+	      poly->GetPointIds()->SetId(n,angles[n].first);
+	    }
+	    cells->InsertNextCell(poly);
+	    cellIds->InsertNextValue(idx);
+
+	    // texture coordinates
+	    // determine up-vector
+	    float3 up;
+	    // find axis most different from nrm
+	    float3 axes[3] = {make_float3(1,0,0), make_float3(0,1,0), make_float3(0,0,1)};
+	    float dotx = std::abs(dot(nrm,axes[0]));
+	    float doty = std::abs(dot(nrm,axes[1]));
+	    float dotz = std::abs(dot(nrm,axes[2]));
+	    int bestAxis = 1;
+	    if (doty > 0.58f) {
+	      bestAxis = 0;
+	      if (dotx > 0.58f) {
+		bestAxis = 2;  
+	      }
+	    }
+	    // if (dotx < doty && dotx < dotz) bestAxis = 0;
+	    // else if (doty < dotz) bestAxis = 1;
+	    // else bestAxis = 2;
+
+	    up = normalize(axes[bestAxis] - dot(axes[bestAxis],nrm)*nrm);
+	    
+	    // right vector
+	    float3 right = normalize(cross(up,nrm));
+	    
+	    float diag = std::sqrt(dx[i]*dx[i] + dy[j]*dy[j] + dz[k]*dz[k]);	    
+	    // const float texScale = std::sqrt(3.0f)/2.0f*diag;
+	    const float texScale = std::sqrt(3.0f)/2.0f*diag*1.5f;
+
+	    for (int n = 0; n < numPoints; ++n) {
+	    
+	      float3 v = vertices[prev_verticesSize+n];
+	      
+	      float tx = dot(v-center,right)/texScale;
+	      float ty = dot(v-center,up)/texScale;
+	      texCoords->InsertNextTuple3(tx, ty, 0.0f);
+	    }
+
+	    prev_indicesSize = indices.size();
+	    prev_verticesSize = vertices.size();
 	  }
-	  center /= numPoints;
-
-	  angles.push_back(std::pair<int,float>(prev_verticesSize+0,0.0f));
-	  for (int n = 1; n < numPoints; ++n) {
-	    float3 e0 = normalize(center - vertices[prev_verticesSize+0]);
-	    float3 e1 = normalize(vertices[prev_verticesSize+n] -
-				  vertices[prev_verticesSize+0]);
-	    float3 cr = cross(e0,e1);
-	    // float3 nrm = normalize(cr);
-	    // float det = dot(nrm,cr);
-	    // float dtp = dot(e0,e1);
-	    // float angle = std::atan2(det,dtp);
-	    float angle = length(cr);
-	    angles.push_back(std::pair<int,float>(prev_verticesSize+n,angle));
-	  }
-	  std::sort(angles.begin(), angles.end(), sortBySecond);
-
-	  vtkPolygon *poly = vtkPolygon::New();
-	  poly->GetPointIds()->SetNumberOfIds(angles.size());
-	  for (int n = 0; n < angles.size(); ++n) {
-	    poly->GetPointIds()->SetId(n,angles[n].first);
-	  }
-	  cells->InsertNextCell(poly);
-	  //
-
-	  // int numTriangles = (indices.size() - prev_indicesSize)/3;
-	  // for (int t = 0; t < numTriangles; ++t) {
-	  //   cellIds->InsertNextValue(idx);
-	  // }
-	  prev_indicesSize = indices.size();
-	  prev_verticesSize = vertices.size();
 	}
       }
     }
@@ -291,32 +336,10 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
     points->SetPoint(i, p);
   }
 
-  // vtkIdTypeArray *cellIndices = vtkIdTypeArray::New();
-  // cellIndices->SetNumberOfComponents(1);
-  // cellIndices->SetNumberOfTuples(numTriangles*4);
-  // for (int i = 0; i < numTriangles; ++i) {
-  //   cellIndices->SetValue(i*4, 3);
-  //   cellIndices->SetValue(i*4+1, indices[i*3+0]);
-  //   cellIndices->SetValue(i*4+2, indices[i*3+1]);
-  //   cellIndices->SetValue(i*4+3, indices[i*3+2]);
-  // }
-
   output->SetPoints(points);
   output->SetPolys(cells);
-  // output->GetCellData()->AddArray(cellIds);
-
-  // texture coordinates------------------------------------------------------
-  // vtkSmartPointer<vtkFloatArray> texCoords = vtkSmartPointer<vtkFloatArray>::New();
-  // texCoords->SetNumberOfComponents(3);
-  // texCoords->SetNumberOfTuples(output->GetNumberOfPoints());
-  // texCoords->SetName("TexCoords");
-
-  // for (int i = 0; i < output->GetNumberOfPoints(); ++i) {
-  //   texCoords->SetTuple3(i,1.0f,1.0f,1.0f);
-  // }
-  
-  // output->GetPointData()->SetTCoords(texCoords);
-  //~texture coordinates------------------------------------------------------
+  output->GetCellData()->AddArray(cellIds);
+  output->GetPointData()->SetTCoords(texCoords);
   
   return 1;
 }
