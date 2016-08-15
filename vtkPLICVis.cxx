@@ -11,12 +11,16 @@
 #include "vtkPointData.h"
 #include "vtkRectilinearGrid.h"
 #include "vtkMPIController.h"
+#include "vtkUnsignedLongArray.h"
+#include "vtkPolygon.h"
 
 #include "vtkPLICVis.h"
 #include "plicvis_impl.h"
 
 #include <vector>
 #include <array>
+#include <utility>
+#include <algorithm>
 
 vtkStandardNewMacro(vtkPLICVis);
 
@@ -114,6 +118,13 @@ int vtkPLICVis::RequestUpdateExtent(vtkInformation *vtkNotUsed(request),
 
   return 1;
 }
+
+//----------------------------------------------------------------------------
+static bool sortBySecond(std::pair<int,float> a, std::pair<int,float> b)
+{
+  return (a.second < b.second);
+}
+
 //----------------------------------------------------------------------------
 int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 			    vtkInformationVector **inputVector,
@@ -171,17 +182,12 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
     kmax = 1;
   }
 
-
   int memSize = 0;  
   vtkDataArray *data = input->GetCellData()->GetArray("Data");
   if (data == nullptr) {
     data = input->GetCellData()->GetArray(0);
   }
   memSize = data->GetActualMemorySize();
-
-  std::cout << "memSize = " << memSize << std::endl;
-
-  const int memAval = 128*256*256*4*13;
 
   std::vector<std::array<int,6>> dataChunks;
   dataChunks.resize(1);
@@ -191,8 +197,18 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
   dataChunks[0][3] = jmax;
   dataChunks[0][4] = kmin;
   dataChunks[0][5] = kmax;
-  
+
+  // vtkSmartPointer<vtkUnsignedLongArray> cellIds = vtkSmartPointer<vtkUnsignedLongArray>::New();
+  // cellIds->SetName("CellIds");
+  // cellIds->SetNumberOfComponents(1);
+  // cellIds->SetNumberOfTuples(0);
+
+  vtkCellArray *cells = vtkCellArray::New();
+  // cells->SetCells(numTriangles, cellIndices);
+
   int vertexID = 0;
+  int prev_indicesSize = 0;
+  int prev_verticesSize = 0;
   for (int c = 0; c < dataChunks.size(); ++c) {
   
     for (int k = dataChunks[c][4]; k < dataChunks[c][5]; ++k) {
@@ -202,7 +218,7 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 	for (int i = dataChunks[c][0]; i < dataChunks[c][1]; ++i) {
 	  float ox = coords[0]->GetComponent(i,0);
 
-	  int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
+	  unsigned int idx = i + j*cellRes[0] + k*cellRes[0]*cellRes[1];
 	  float f = data->GetComponent(idx, 0);
 	  if (f <= EMF0) {
 	    continue;
@@ -214,6 +230,48 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
 	  float3 grad = computeGradient(data, i, j, k, cellRes, dx, dy, dz);
 	  generatePLIC(f, grad, dx[i], dy[j], dz[k], 
 		       ox, oy, oz, vertices, indices, vertexID);
+
+	  
+	  //
+	  int numPoints = vertices.size() - prev_verticesSize;
+	  std::vector<std::pair<int,float>> angles;
+	  angles.clear();
+
+	  float3 center = make_float3(0.0f);
+	  for (int n = 0; n < numPoints; ++n) {
+	    center += vertices[prev_verticesSize+n];
+	  }
+	  center /= numPoints;
+
+	  angles.push_back(std::pair<int,float>(prev_verticesSize+0,0.0f));
+	  for (int n = 1; n < numPoints; ++n) {
+	    float3 e0 = normalize(center - vertices[prev_verticesSize+0]);
+	    float3 e1 = normalize(vertices[prev_verticesSize+n] -
+				  vertices[prev_verticesSize+0]);
+	    float3 cr = cross(e0,e1);
+	    // float3 nrm = normalize(cr);
+	    // float det = dot(nrm,cr);
+	    // float dtp = dot(e0,e1);
+	    // float angle = std::atan2(det,dtp);
+	    float angle = length(cr);
+	    angles.push_back(std::pair<int,float>(prev_verticesSize+n,angle));
+	  }
+	  std::sort(angles.begin(), angles.end(), sortBySecond);
+
+	  vtkPolygon *poly = vtkPolygon::New();
+	  poly->GetPointIds()->SetNumberOfIds(angles.size());
+	  for (int n = 0; n < angles.size(); ++n) {
+	    poly->GetPointIds()->SetId(n,angles[n].first);
+	  }
+	  cells->InsertNextCell(poly);
+	  //
+
+	  // int numTriangles = (indices.size() - prev_indicesSize)/3;
+	  // for (int t = 0; t < numTriangles; ++t) {
+	  //   cellIds->InsertNextValue(idx);
+	  // }
+	  prev_indicesSize = indices.size();
+	  prev_verticesSize = vertices.size();
 	}
       }
     }
@@ -233,21 +291,33 @@ int vtkPLICVis::RequestData(vtkInformation *vtkNotUsed(request),
     points->SetPoint(i, p);
   }
 
-  vtkIdTypeArray *cellIndices = vtkIdTypeArray::New();
-  cellIndices->SetNumberOfComponents(1);
-  cellIndices->SetNumberOfTuples(numTriangles*4);
-  for (int i = 0; i < numTriangles; ++i) {
-    cellIndices->SetValue(i*4, 3);
-    cellIndices->SetValue(i*4+1, indices[i*3+0]);
-    cellIndices->SetValue(i*4+2, indices[i*3+1]);
-    cellIndices->SetValue(i*4+3, indices[i*3+2]);
-  }
-  vtkCellArray *cells = vtkCellArray::New();
-  cells->SetCells(numTriangles, cellIndices);
+  // vtkIdTypeArray *cellIndices = vtkIdTypeArray::New();
+  // cellIndices->SetNumberOfComponents(1);
+  // cellIndices->SetNumberOfTuples(numTriangles*4);
+  // for (int i = 0; i < numTriangles; ++i) {
+  //   cellIndices->SetValue(i*4, 3);
+  //   cellIndices->SetValue(i*4+1, indices[i*3+0]);
+  //   cellIndices->SetValue(i*4+2, indices[i*3+1]);
+  //   cellIndices->SetValue(i*4+3, indices[i*3+2]);
+  // }
 
   output->SetPoints(points);
   output->SetPolys(cells);
+  // output->GetCellData()->AddArray(cellIds);
 
+  // texture coordinates------------------------------------------------------
+  // vtkSmartPointer<vtkFloatArray> texCoords = vtkSmartPointer<vtkFloatArray>::New();
+  // texCoords->SetNumberOfComponents(3);
+  // texCoords->SetNumberOfTuples(output->GetNumberOfPoints());
+  // texCoords->SetName("TexCoords");
+
+  // for (int i = 0; i < output->GetNumberOfPoints(); ++i) {
+  //   texCoords->SetTuple3(i,1.0f,1.0f,1.0f);
+  // }
+  
+  // output->GetPointData()->SetTCoords(texCoords);
+  //~texture coordinates------------------------------------------------------
+  
   return 1;
 }
 
